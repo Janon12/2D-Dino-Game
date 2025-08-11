@@ -1,129 +1,711 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Dinosaur Runner</title>
-  <style>
-    body {
-      margin: 0;
-      background-color: #aee0f8;
-      overflow: hidden;
-    }
-    canvas {
-      display: block;
-      margin: auto;
-      background: #7cfc00;
-      border: 2px solid #333;
-    }
-    .controls {
-      position: fixed;
-      bottom: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 10px;
-    }
-    .btn {
-      background: #444;
-      color: white;
-      font-size: 20px;
-      border: none;
-      padding: 15px 20px;
-      border-radius: 10px;
-      user-select: none;
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Dinosaur 2D SIM</title>
+<style>
+  html,body { height:100%; margin:0; background:#87d3ff; -webkit-tap-highlight-color: transparent; }
+  #gameWrap { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+  canvas { background: linear-gradient(#87d3ff,#9be6ff 60%); border:4px solid #2d2d2d; touch-action: none; }
+  .ui {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 8px;
+    display:flex;
+    gap:12px;
+    z-index: 20;
+    user-select:none;
+  }
+  .btn {
+    font-size:20px;
+    padding:12px 16px;
+    border-radius:12px;
+    border:none;
+    background: rgba(50,50,50,0.85);
+    color: #fff;
+    min-width:56px;
+    text-align:center;
+    -webkit-user-select:none;
+  }
+  .topbar {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align:center;
+    z-index:30;
+    color:#111;
+    text-shadow: 0 1px 0 #fff;
+    pointer-events:none;
+  }
+  .hint {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    font-size:12px;
+    color:#222;
+    opacity:0.9;
+    background: rgba(255,255,255,0.6);
+    padding:6px 8px;
+    border-radius:8px;
+  }
+</style>
 </head>
 <body>
-<canvas id="gameCanvas" width="800" height="400"></canvas>
-
-<div class="controls">
-  <button class="btn" id="leftBtn">⬅</button>
-  <button class="btn" id="jumpBtn">⤒</button>
-  <button class="btn" id="rightBtn">➡</button>
+<div id="gameWrap">
+  <canvas id="c"></canvas>
 </div>
 
-<script>
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
+<div class="topbar">
+  <div style="font-family:Arial,Helvetica,sans-serif; font-weight:700; font-size:20px;">Dinosaur 2D SIM</div>
+  <div id="scoreText" style="font-family:monospace; font-size:14px;">Score: 0 &nbsp; Lives: 3 &nbsp; Level: 1</div>
+</div>
 
-let dino = {
-  x: 50,
-  y: 300,
-  width: 50,
-  height: 50,
-  color: "green",
-  speed: 5,
-  vy: 0,
-  gravity: 0.5,
-  jumpPower: -10,
-  onGround: true
+<div class="ui">
+  <button class="btn" id="left">⬅</button>
+  <button class="btn" id="jump">⤒</button>
+  <button class="btn" id="right">➡</button>
+</div>
+
+<div class="hint">Use buttons on mobile or ← → and Space on keyboard. Reach the green flag to finish level.</div>
+
+<script>
+/* =========================
+   Configuration & Helpers
+   ========================= */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+let DPR = window.devicePixelRatio || 1;
+
+function fitCanvas() {
+  const maxW = Math.min(window.innerWidth-12, 1000);
+  const maxH = Math.min(window.innerHeight-20, 700);
+  // keep aspect ratio 16:9-ish
+  let w = maxW;
+  let h = Math.round(w * 9/16);
+  if (h > maxH) { h = maxH; w = Math.round(h * 16/9); }
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.width = Math.round(w * DPR);
+  canvas.height = Math.round(h * DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+fitCanvas();
+window.addEventListener('resize', () => { DPR = window.devicePixelRatio || 1; fitCanvas(); });
+
+const GRAV = 0.6;
+const FRICTION = 0.98;
+
+/* =========================
+   World / Level Data
+   ========================= */
+
+/*
+ Level format: width (px), an array of objects:
+  - platform: {type:'plat', x, y, w, h}
+  - enemy:    {type:'enemy', x, y, w, h, vx}
+  - coin:     {type:'coin', x, y, r}
+  - flag:     {type:'flag', x, y}
+*/
+
+const LEVELS = [
+  { width: 2200, items: [
+      {type:'plat', x:0, y:320, w:2200, h:80},
+      {type:'coin', x:350, y:260, r:10},
+      {type:'coin', x:420, y:220, r:10},
+      {type:'coin', x:520, y:180, r:10},
+      {type:'plat', x:600, y:250, w:160, h:18},
+      {type:'enemy', x:900, y:288, w:44, h:32, vx:1.3},
+      {type:'plat', x:1100, y:200, w:120, h:18},
+      {type:'coin', x:1160, y:160, r:10},
+      {type:'plat', x:1400, y:260, w:180, h:18},
+      {type:'enemy', x:1550, y:230, w:34, h:30, vx:1.6},
+      {type:'plat', x:1800, y:240, w:160, h:18},
+      {type:'flag', x:2050, y:240}
+    ]
+  },
+
+  { width: 3000, items: [
+      {type:'plat', x:0, y:320, w:3000, h:80},
+      {type:'plat', x:300, y:260, w:120, h:18},
+      {type:'enemy', x:420, y:228, w:36, h:28, vx:1.9},
+      {type:'plat', x:520, y:210, w:160, h:18},
+      {type:'coin', x:560, y:170, r:10},
+      {type:'plat', x:780, y:260, w:200, h:18},
+      {type:'enemy', x:980, y:228, w:40, h:30, vx:2.2},
+      {type:'plat', x:1250, y:220, w:140, h:18},
+      {type:'plat', x:1600, y:180, w:120, h:18},
+      {type:'coin', x:1640, y:140, r:10},
+      {type:'enemy', x:1720, y:148, w:36, h:28, vx:2.5},
+      {type:'plat', x:2000, y:240, w:160, h:18},
+      {type:'flag', x:2800, y:200}
+    ]
+  },
+
+  { width: 3600, items: [
+      {type:'plat', x:0, y:320, w:3600, h:80},
+      {type:'plat', x:220, y:260, w:150, h:18},
+      {type:'enemy', x:360, y:228, w:38, h:30, vx:2.6},
+      {type:'plat', x:520, y:210, w:160, h:18},
+      {type:'coin', x:560, y:170, r:10},
+      {type:'plat', x:780, y:260, w:200, h:18},
+      {type:'enemy', x:980, y:228, w:42, h:32, vx:2.7},
+      {type:'plat', x:1250, y:200, w:100, h:18},
+      {type:'plat', x:1400, y:150, w:140, h:18},
+      {type:'enemy', x:1480, y:118, w:36, h:28, vx:3.0},
+      {type:'coin', x:1500, y:110, r:10},
+      {type:'plat', x:2000, y:200, w:220, h:18},
+      {type:'flag', x:3400, y:160}
+    ]
+  }
+];
+
+/* =========================
+   Game State
+   ========================= */
+
+let state = {
+  levelIndex: 0,
+  score: 0,
+  lives: 3,
+  player: null,
+  cameraX: 0,
+  playing: true,
+  paused: false,
+  collected: new Set()
 };
 
-let keys = { left: false, right: false, jump: false };
+/* =========================
+   Player (Dinosaur) object
+   ========================= */
 
-// Desktop controls
-document.addEventListener("keydown", (e) => {
-  if (e.code === "ArrowLeft") keys.left = true;
-  if (e.code === "ArrowRight") keys.right = true;
-  if (e.code === "Space") keys.jump = true;
+function makePlayer() {
+  return {
+    x: 80, y: 220,
+    w: 56, h: 46,
+    vx: 0, vy: 0,
+    speed: 3.6,
+    jumpPower: -12,
+    onGround: false,
+    facing: 1, // 1 right, -1 left
+    stompCool: 0
+  };
+}
+
+/* =========================
+   Input (keyboard + touch)
+   ========================= */
+
+const input = { left:false, right:false, jump:false, jumpPressed:false };
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'ArrowLeft') input.left = true;
+  if (e.code === 'ArrowRight') input.right = true;
+  if (e.code === 'Space') { input.jump = true; input.jumpPressed = true; }
+  if (e.code === 'KeyP') state.paused = !state.paused;
 });
-document.addEventListener("keyup", (e) => {
-  if (e.code === "ArrowLeft") keys.left = false;
-  if (e.code === "ArrowRight") keys.right = false;
-  if (e.code === "Space") keys.jump = false;
+
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowLeft') input.left = false;
+  if (e.code === 'ArrowRight') input.right = false;
+  if (e.code === 'Space') { input.jump = false; input.jumpPressed = false; }
 });
 
-// Mobile controls
-document.getElementById("leftBtn").addEventListener("touchstart", () => keys.left = true);
-document.getElementById("leftBtn").addEventListener("touchend", () => keys.left = false);
+function attachButton(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('touchstart', (ev) => { ev.preventDefault(); input[key] = true; }, {passive:false});
+  el.addEventListener('touchend', (ev) => { ev.preventDefault(); input[key] = false; }, {passive:false});
+  el.addEventListener('mousedown', (ev) => { ev.preventDefault(); input[key] = true; });
+  el.addEventListener('mouseup',   (ev) => { ev.preventDefault(); input[key] = false; });
+  el.addEventListener('mouseleave',(ev) => { ev.preventDefault(); input[key] = false; });
+}
+attachButton('left','left');
+attachButton('right','right');
+attachButton('jump','jump');
 
-document.getElementById("rightBtn").addEventListener("touchstart", () => keys.right = true);
-document.getElementById("rightBtn").addEventListener("touchend", () => keys.right = false);
+/* =========================
+   Initialize level objects
+   ========================= */
 
-document.getElementById("jumpBtn").addEventListener("touchstart", () => keys.jump = true);
-document.getElementById("jumpBtn").addEventListener("touchend", () => keys.jump = false);
+function instanceLevel(idx) {
+  const template = LEVELS[idx];
+  const objs = [];
+  template.items.forEach((it, i) => {
+    const copy = Object.assign({}, it);
+    // give IDs
+    copy.id = `${idx}-${i}-${it.type}`;
+    if (copy.type === 'enemy') copy.dir = 1;
+    if (copy.type === 'coin') copy.collected = false;
+    objs.push(copy);
+  });
+  return { width: template.width, objs };
+}
 
-function update() {
-  if (keys.left) dino.x -= dino.speed;
-  if (keys.right) dino.x += dino.speed;
+/* =========================
+   Utility collision helpers
+   ========================= */
 
-  if (keys.jump && dino.onGround) {
-    dino.vy = dino.jumpPower;
-    dino.onGround = false;
+function rectIntersect(a,b) {
+  return !(a.x+a.w <= b.x || a.x >= b.x+b.w || a.y+a.h <= b.y || a.y >= b.y+b.h);
+}
+
+/* =========================
+   3D-ish Parallax background layers
+   ========================= */
+
+function drawParallax(camX, w, h) {
+  // far mountains
+  const layers = [
+    {scale:0.2, colorTop:'#cfe8ff', colorBottom:'#a6d5ff', amplitude:30, yBase:140},
+    {scale:0.45, colorTop:'#dceffd', colorBottom:'#bfe6ff', amplitude:20, yBase:180},
+    {scale:0.8, colorTop:'#e6f8ff', colorBottom:'#d0f1ff', amplitude:12, yBase:220}
+  ];
+  layers.forEach((L, idx) => {
+    const offset = - (camX * L.scale) % 800;
+    ctx.save();
+    ctx.globalAlpha = 1 - idx*0.07;
+    // simple repeated hills
+    for (let x = offset - 1000; x < w+1000; x += 800) {
+      ctx.beginPath();
+      const startY = L.yBase;
+      ctx.moveTo(x, h);
+      for (let i=0;i<=20;i++){
+        const px = x + (i/20)*800;
+        const py = startY - Math.sin((i/20)*Math.PI*2 + idx*0.4)*L.amplitude;
+        ctx.lineTo(px, py);
+      }
+      ctx.lineTo(x+800, h);
+      ctx.closePath();
+      // gradient
+      const g = ctx.createLinearGradient(0, startY-80, 0, h);
+      g.addColorStop(0, L.colorTop);
+      g.addColorStop(1, L.colorBottom);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+/* =========================
+   Draw a cartoon dinosaur
+   (simple vector "sprite")
+   ========================= */
+
+function drawDino(ctx, x, y, w, h, facing, t) {
+  // t = time for little bobbing
+  ctx.save();
+  ctx.translate(x + w/2, y + h/2);
+  ctx.scale(facing,1);
+
+  // slight squash/stretch when moving
+  const bob = Math.sin(t*0.02)*2;
+  ctx.translate(-w/2, -h/2 + bob);
+
+  // body
+  ctx.fillStyle = '#2e8b3a';
+  roundRect(ctx, 8, 10, w-16, h-18, 10);
+  ctx.fill();
+
+  // belly (lighter)
+  ctx.fillStyle = '#a0e093';
+  roundRect(ctx, 16, 24, w-32, h-30, 8);
+  ctx.fill();
+
+  // tail
+  ctx.beginPath();
+  ctx.moveTo(w-6, 22);
+  ctx.quadraticCurveTo(w+12, 18, w+24, 28);
+  ctx.quadraticCurveTo(w+6, 30, w-6, 34);
+  ctx.fill();
+
+  // head
+  ctx.beginPath();
+  ctx.ellipse(12, 12, 14, 12, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // eye
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.ellipse(8,10,4,4,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(9,10,1.6,0,Math.PI*2); ctx.fill();
+
+  // legs
+  ctx.fillStyle = '#2e8b3a';
+  roundRect(ctx, 18, h-18, 12, 16, 6); ctx.fill();
+  roundRect(ctx, w-34, h-18, 12, 16, 6); ctx.fill();
+
+  // little spikes on back
+  ctx.fillStyle = '#1f6a2a';
+  for (let i=0;i<4;i++){
+    ctx.beginPath();
+    const sx = 20 + i*14;
+    const sy = 6;
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx+6, sy-12);
+    ctx.lineTo(sx+12, sy);
+    ctx.closePath();
+    ctx.fill();
   }
 
-  dino.vy += dino.gravity;
-  dino.y += dino.vy;
+  // shadow (ground)
+  ctx.restore();
+}
 
-  if (dino.y + dino.height >= canvas.height - 50) {
-    dino.y = canvas.height - 50 - dino.height;
-    dino.vy = 0;
-    dino.onGround = true;
+/* small helper to draw rounded rect */
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+/* =========================
+   Game functions
+   ========================= */
+
+let currentLevel = instanceLevel(state.levelIndex);
+state.player = makePlayer();
+let ttime = 0;
+
+function resetLevel(idx) {
+  state.levelIndex = idx;
+  currentLevel = instanceLevel(idx);
+  state.player = makePlayer();
+  state.player.x = 80;
+  state.cameraX = 0;
+  state.collected = new Set();
+  state.playing = true;
+  updateScoreText();
+}
+
+function updateScoreText() {
+  const el = document.getElementById('scoreText');
+  el.textContent = `Score: ${state.score}   Lives: ${state.lives}   Level: ${state.levelIndex+1}`;
+}
+
+/* Main update loop */
+function update(dt) {
+  if (!state.playing || state.paused) return;
+  ttime += dt;
+
+  const p = state.player;
+  // horizontal input
+  let accel = 0;
+  if (input.left) { accel -= p.speed; p.facing = -1; }
+  if (input.right){ accel += p.speed; p.facing = 1; }
+
+  p.vx = p.vx*FRICTION + accel*0.2;
+
+  // jump control (single press)
+  if (input.jump && p.onGround) {
+    p.vy = p.jumpPower;
+    p.onGround = false;
   }
 
-  if (dino.x < 0) dino.x = 0;
-  if (dino.x + dino.width > canvas.width) dino.x = canvas.width - dino.width;
+  // apply gravity
+  p.vy += GRAV;
+  p.x += p.vx;
+  p.y += p.vy;
+
+  // camera follows player with smoothing
+  const camCenter = (canvas.width/DPR) * 0.4;
+  state.cameraX += ((p.x - state.cameraX) - camCenter) * 0.08;
+
+  // level bounds
+  if (p.x < 0) p.x = 0;
+  if (p.x > currentLevel.width - p.w) p.x = currentLevel.width - p.w;
+
+  // basic collisions with platforms & floor
+  p.onGround = false;
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'plat') {
+      const plat = {x:obj.x, y:obj.y, w:obj.w, h:obj.h};
+      const playerRect = {x:p.x, y:p.y, w:p.w, h:p.h};
+      if (rectIntersect(playerRect, plat)) {
+        // simple top collision
+        const prevY = p.y - p.vy;
+        if (prevY + p.h <= plat.y + 6) {
+          // land on platform
+          p.y = plat.y - p.h;
+          p.vy = 0;
+          p.onGround = true;
+        } else {
+          // hit sideways - nudge out
+          if (p.x + p.w/2 < plat.x + plat.w/2) p.x = plat.x - p.w - 0.1;
+          else p.x = plat.x + plat.w + 0.1;
+          p.vx = 0;
+        }
+      }
+    }
+  });
+
+  // enemies movement and collisions
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'enemy') {
+      obj.x += obj.vx * (obj.dir || 1);
+      // patrol boundaries approx (enemy constrained by small area)
+      if (!obj.minX) {
+        obj.minX = obj.x - 80;
+        obj.maxX = obj.x + 80;
+      }
+      if (obj.x < obj.minX) obj.dir = 1;
+      if (obj.x > obj.maxX) obj.dir = -1;
+      // collision with player
+      const enemyRect = {x:obj.x, y:obj.y, w:obj.w, h:obj.h};
+      const playerRect = {x:p.x, y:p.y, w:p.w, h:p.h};
+      if (rectIntersect(enemyRect, playerRect)) {
+        if (p.vy > 2 && (p.y + p.h - 6) <= obj.y) {
+          // stomp - kill enemy
+          obj.dead = true;
+          p.vy = p.jumpPower * 0.45; // small bounce
+          state.score += 50;
+          updateScoreText();
+        } else {
+          // player takes damage/hit
+          if (state.lives > 0) {
+            state.lives--;
+            updateScoreText();
+            // knockback
+            p.vx = -p.facing * 4;
+            p.vy = -6;
+            if (state.lives <= 0) {
+              state.playing = false;
+              setTimeout(()=> showMessage('Game Over — Tap to restart', true), 60);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // coins & flag
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'coin' && !obj.collected) {
+      const coinRect = {x:obj.x-obj.r, y:obj.y-obj.r, w:obj.r*2, h:obj.r*2};
+      const playerRect = {x:p.x, y:p.y, w:p.w, h:p.h};
+      if (rectIntersect(coinRect, playerRect)) {
+        obj.collected = true;
+        state.score += 25;
+        updateScoreText();
+      }
+    }
+    if (obj.type === 'flag') {
+      const flagRect = {x:obj.x, y:obj.y-40, w:24, h:80};
+      const playerRect = {x:p.x, y:p.y, w:p.w, h:p.h};
+      if (rectIntersect(flagRect, playerRect)) {
+        // level complete
+        state.score += 200;
+        updateScoreText();
+        if (state.levelIndex < LEVELS.length - 1) {
+          state.levelIndex++;
+          setTimeout(()=> {
+            showMessage(`Level ${state.levelIndex} Complete!`, false);
+            resetLevel(state.levelIndex);
+          }, 200);
+        } else {
+          showMessage('You finished all levels! 🎉', true);
+        }
+      }
+    }
+  });
+
+  // remove dead enemies
+  currentLevel.objs = currentLevel.objs.filter(o => !o.dead);
+
+  // ground floor fallback (if player falls off screen)
+  if (p.y > 2000) {
+    state.lives--;
+    updateScoreText();
+    if (state.lives <= 0) {
+      state.playing = false;
+      setTimeout(()=> showMessage('Game Over — Tap to restart', true), 60);
+    } else {
+      // respawn
+      p.x = Math.max(80, state.cameraX + 40);
+      p.y = 0;
+      p.vx = 0; p.vy = 0;
+    }
+  }
 }
 
-function draw() {
-  ctx.fillStyle = "#aee0f8";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+/* =========================
+   Drawing
+   ========================= */
 
-  ctx.fillStyle = "#228B22";
-  ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
-
-  ctx.fillStyle = dino.color;
-  ctx.fillRect(dino.x, dino.y, dino.width, dino.height);
+function clearScreen() {
+  ctx.fillStyle = '#87d3ff';
+  ctx.fillRect(0,0,canvas.width/DPR, canvas.height/DPR);
 }
 
-function loop() {
-  update();
-  draw();
-  requestAnimationFrame(loop);
+function render() {
+  const W = canvas.width/DPR, H = canvas.height/DPR;
+  clearScreen();
+
+  // parallax background (3D-ish)
+  drawParallax(state.cameraX, W, H);
+
+  // ground and far objects shadow
+  ctx.save();
+  ctx.translate(Math.round(-state.cameraX), 0);
+
+  // draw platforms
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'plat') {
+      // give plat a slight 3D bevel
+      ctx.fillStyle = '#6bb04a';
+      ctx.fillRect(obj.x, obj.y, obj.w, obj.h);
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.fillRect(obj.x+6, obj.y+obj.h-6, Math.min(50,obj.w), 6);
+    }
+  });
+
+  // draw coins
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'coin' && !obj.collected) {
+      ctx.save();
+      ctx.translate(obj.x, obj.y);
+      ctx.beginPath();
+      ctx.ellipse(0,0, obj.r, obj.r*0.85, 0, 0, Math.PI*2);
+      const g = ctx.createRadialGradient(-obj.r*0.3, -obj.r*0.3, 1, 0,0, obj.r);
+      g.addColorStop(0, '#fff59d'); g.addColorStop(0.6,'#ffd54f'); g.addColorStop(1,'#ffb300');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.restore();
+    }
+  });
+
+  // draw enemies
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'enemy') {
+      ctx.fillStyle = '#8b2e2e';
+      roundRect(ctx, obj.x, obj.y, obj.w, obj.h, 6);
+      ctx.fill();
+      // simple eye
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(obj.x+obj.w*0.65, obj.y+8, 4,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(obj.x+obj.w*0.65, obj.y+8, 1.6,0,Math.PI*2); ctx.fill();
+    }
+  });
+
+  // draw flag
+  currentLevel.objs.forEach(obj => {
+    if (obj.type === 'flag') {
+      ctx.fillStyle = '#4caf50';
+      ctx.fillRect(obj.x, obj.y-60, 6, 70);
+      ctx.beginPath();
+      ctx.moveTo(obj.x+6, obj.y-60);
+      ctx.lineTo(obj.x+38, obj.y-44);
+      ctx.lineTo(obj.x+6, obj.y-28);
+      ctx.closePath();
+      ctx.fill();
+    }
+  });
+
+  // draw player (uses camera transform)
+  ctx.restore();
+
+  // compute screen x,y for dino (dino world coords -> screen)
+  const px = state.player.x - state.cameraX;
+  const py = state.player.y;
+
+  // shadow
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  ctx.beginPath();
+  ctx.ellipse(px + state.player.w/2, py + state.player.h + 8, state.player.w*0.6, 8, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // dino body drawn with facing & time
+  drawDino(ctx, px, py, state.player.w, state.player.h, state.player.facing, ttime);
+
+  // HUD text (title drawn above by HTML, but we add subtle in-canvas)
+  ctx.save();
+  ctx.font = 'bold 14px monospace';
+  ctx.fillStyle = '#112';
+  ctx.fillText(`Score: ${state.score}`, 12, 22);
+  ctx.fillText(`Lives: ${state.lives}`, 12, 40);
+  ctx.fillText(`Level: ${state.levelIndex+1}`, 12, 58);
+  ctx.restore();
 }
 
-loop();
-</script>
-</body>
-</html>
+/* =========================
+   Message overlay helpers
+   ========================= */
+
+let overlayTimeout = null;
+function showMessage(txt, clickableRestart) {
+  // draw a simple overlay in canvas for a few seconds
+  const W = canvas.width/DPR, H = canvas.height/DPR;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 26px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(txt, W/2, H/2 - 10);
+  ctx.font = '16px Arial';
+  ctx.fillText(clickableRestart ? 'Tap to restart' : '', W/2, H/2 + 22);
+  ctx.restore();
+
+  state.playing = !clickableRestart;
+  if (clickableRestart) {
+    // wait for tap/click to restart
+    function restartHandler() {
+      resetEverything();
+      window.removeEventListener('pointerdown', restartHandler);
+    }
+    window.addEventListener('pointerdown', restartHandler);
+  } else {
+    // short overlay then continue
+    if (overlayTimeout) clearTimeout(overlayTimeout);
+    overlayTimeout = setTimeout(()=> { overlayTimeout = null; }, 1200);
+  }
+}
+
+/* =========================
+   Start/Reset helpers
+   ========================= */
+
+function resetEverything() {
+  state.levelIndex = 0;
+  state.score = 0;
+  state.lives = 3;
+  state.collected = new Set();
+  resetLevel(0);
+  updateScoreText();
+  state.playing = true;
+}
+
+/* =========================
+   Main loop
+   ========================= */
+
+let last = performance.now();
+function frame(now) {
+  const dt = now - last;
+  last = now;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+resetEverything();
+requestAnimationFrame(frame);
+
+/* =========================
+   Small tweaks: tap to jump if no left/right held
+   ========================= */
+
+canvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    // quick tap ne
