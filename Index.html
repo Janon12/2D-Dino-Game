@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Dinosaur Runner</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #aee0f8;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      margin: auto;
+      background: #7cfc00;
+      border: 2px solid #333;
+    }
+    .controls {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+    }
+    .btn {
+      background: #444;
+      color: white;
+      font-size: 20px;
+      border: none;
+      padding: 15px 20px;
+      border-radius: 10px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<div class="controls">
+  <button class="btn" id="leftBtn">⬅</button>
+  <button class="btn" id="jumpBtn">⤒</button>
+  <button class="btn" id="rightBtn">➡</button>
+</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let dino = {
+  x: 50,
+  y: 300,
+  width: 50,
+  height: 50,
+  color: "green",
+  speed: 5,
+  vy: 0,
+  gravity: 0.5,
+  jumpPower: -10,
+  onGround: true
+};
+
+let keys = { left: false, right: false, jump: false };
+
+// Desktop controls
+document.addEventListener("keydown", (e) => {
+  if (e.code === "ArrowLeft") keys.left = true;
+  if (e.code === "ArrowRight") keys.right = true;
+  if (e.code === "Space") keys.jump = true;
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "ArrowLeft") keys.left = false;
+  if (e.code === "ArrowRight") keys.right = false;
+  if (e.code === "Space") keys.jump = false;
+});
+
+// Mobile controls
+document.getElementById("leftBtn").addEventListener("touchstart", () => keys.left = true);
+document.getElementById("leftBtn").addEventListener("touchend", () => keys.left = false);
+
+document.getElementById("rightBtn").addEventListener("touchstart", () => keys.right = true);
+document.getElementById("rightBtn").addEventListener("touchend", () => keys.right = false);
+
+document.getElementById("jumpBtn").addEventListener("touchstart", () => keys.jump = true);
+document.getElementById("jumpBtn").addEventListener("touchend", () => keys.jump = false);
+
+function update() {
+  if (keys.left) dino.x -= dino.speed;
+  if (keys.right) dino.x += dino.speed;
+
+  if (keys.jump && dino.onGround) {
+    dino.vy = dino.jumpPower;
+    dino.onGround = false;
+  }
+
+  dino.vy += dino.gravity;
+  dino.y += dino.vy;
+
+  if (dino.y + dino.height >= canvas.height - 50) {
+    dino.y = canvas.height - 50 - dino.height;
+    dino.vy = 0;
+    dino.onGround = true;
+  }
+
+  if (dino.x < 0) dino.x = 0;
+  if (dino.x + dino.width > canvas.width) dino.x = canvas.width - dino.width;
+}
+
+function draw() {
+  ctx.fillStyle = "#aee0f8";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#228B22";
+  ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
+
+  ctx.fillStyle = dino.color;
+  ctx.fillRect(dino.x, dino.y, dino.width, dino.height);
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
